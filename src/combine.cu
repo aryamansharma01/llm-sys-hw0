@@ -268,7 +268,14 @@ __global__ void mapKernel(
   // 5. Calculate the position of element in out_array according to out_index and out_strides
   // 6. Apply the unary function to the input element and write the output to the out memory
 
-  assert(false && "Not Implemented");
+  int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if(i<out_size){
+    to_index(i,out_shape,out_index,shape_size);
+    broadcast_index(out_index,out_shape,in_shape,in_index,shape_size,shape_size);
+    int in_pos = index_to_position(in_index,in_strides,shape_size);
+    int out_pos = index_to_position(out_index,out_strides,shape_size);
+    out[out_pos] = fn(fn_id,in_storage[in_pos]);
+  }
   /// END HW1_1
 }
 
@@ -334,7 +341,17 @@ __global__ void zipKernel(
   // 7.Calculate the position of element in b_array according to b_index and b_strides
   // 8. Apply the binary function to the input elements in a_array & b_array and write the output to the out memory
 
-  assert(false && "Not Implemented");
+  int i = blockIdx.x*blockDim.x+threadIdx.x;
+  if (i<out_size){
+    to_index(i, out_shape, out_index, out_shape_size);
+    int out_pos = index_to_position(out_index, out_strides, out_shape_size);
+    broadcast_index(out_index, out_shape, a_shape, a_index, out_shape_size, a_shape_size);
+    int a_pos = index_to_position(a_index, a_strides, a_shape_size);
+    broadcast_index(out_index, out_shape, b_shape, b_index, out_shape_size, b_shape_size);
+    int b_pos = index_to_position(b_index, b_strides, b_shape_size);
+    out[out_pos] = fn(fn_id, a_storage[a_pos], b_storage[b_pos]);
+  }
+
   /// END HW1_2
 }
 
@@ -390,7 +407,23 @@ __global__ void reduceKernel(
   // 4. Iterate over the reduce_dim dimension of the input array to compute the reduced value
   // 5. Write the reduced value to out memory
 
-  assert(false && "Not Implemented");
+  int out_pos = blockIdx.x*blockDim.x+threadIdx.x;
+  if (out_pos<out_size){
+    to_index(out_pos, out_shape, out_index, shape_size);
+    int out_storage_pos = index_to_position(out_index, out_strides, shape_size);
+    int a_index[MAX_DIMS];
+    for (int d = 0; d < shape_size; ++d)
+      a_index[d] = out_index[d];
+    int reduce_size = a_shape[reduce_dim];
+    for (int s = 0; s < reduce_size; ++s)
+    {
+      a_index[reduce_dim] = s;
+      int a_pos = index_to_position(a_index, a_strides, shape_size);
+      reduce_value = fn(fn_id, reduce_value, a_storage[a_pos]);
+    }
+    out[out_storage_pos] = reduce_value;
+  }
+
   /// END HW1_3
 }
 
@@ -450,7 +483,35 @@ __global__ void MatrixMultiplyKernel(
   // 6. Synchronize to make sure all threads are done computing the output tile for (row, col)
   // 7. Write the output to global memory
 
-  assert(false && "Not Implemented");
+  int row = blockIdx.x * TILE + threadIdx.x;
+  int col = blockIdx.y * TILE + threadIdx.y;
+  int n = a_shape[2]; // == b_shape[1], the shared inner dimension
+  float acc = 0.0;
+  for (int t = 0; t < (n + TILE - 1) / TILE; ++t){
+    int a_col = t * TILE + threadIdx.y;
+    if (row < a_shape[1] && a_col < n)
+      a_shared[threadIdx.x][threadIdx.y] =
+          a_storage[batch * a_batch_stride + row * a_strides[1] + a_col * a_strides[2]];
+    else
+      a_shared[threadIdx.x][threadIdx.y] = 0.0;
+
+    int b_row = t * TILE + threadIdx.x;
+    if (b_row < n && col < b_shape[2])
+      b_shared[threadIdx.x][threadIdx.y] =
+          b_storage[batch * b_batch_stride + b_row * b_strides[1] + col * b_strides[2]];
+    else
+      b_shared[threadIdx.x][threadIdx.y] = 0.0;
+    __syncthreads();
+    for (int k = 0; k < TILE; ++k)
+      acc += a_shared[threadIdx.x][k] * b_shared[k][threadIdx.y];
+    __syncthreads();
+  }
+  if (row < out_shape[1] && col < out_shape[2])
+  {
+    int out_pos = batch * out_strides[0] + row * out_strides[1] + col * out_strides[2];
+    out[out_pos] = acc;
+  }
+
   /// END HW1_4
 }
 
